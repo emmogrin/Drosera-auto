@@ -134,7 +134,9 @@ if [[ "$INSTALL_METHOD" == "docker" ]]; then
 
   cp .env.example .env
 
-  sed -i "s|your_evm_private_key|$PRIVATE_KEY|g" .env
+  # ✅ Escape the private key before using sed
+  escaped_key=$(printf '%s\n' "$PRIVATE_KEY" | sed -e 's/[\/&]/\\&/g')
+  sed -i "s|your_evm_private_key|$escaped_key|g" .env
   sed -i "s|your_vps_public_ip|$VPS_IP|g" .env
   sed -i "s|https://ethereum-holesky-rpc.publicnode.com|$RPC_URL|g" docker-compose.yaml
 
