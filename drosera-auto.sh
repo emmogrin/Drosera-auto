@@ -2,6 +2,9 @@
 
 echo "=== 🚀 Drosera One-Click Setup (Trap + Operator) ==="
 
+# === **Saint Khen** ===
+echo -e "\n\033[1mSaint Khen\033[0m\n"
+
 # Prompt inputs
 read -p "Enter your Trap EVM Private Key: " PRIVATE_KEY
 read -p "Enter your Ethereum Holesky RPC URL (Alchemy/QuickNode): " RPC_URL
@@ -91,15 +94,25 @@ sudo ufw allow 31314/tcp
 sudo ufw --force enable
 
 # ----------------------------
-# Step 9: Run Operator
+# Step 9: Create .env for Docker
+# ----------------------------
+cat <<EOF > ~/my-drosera-trap/.env
+EVM_PRIVATE_KEY=$PRIVATE_KEY
+VPS_PUBLIC_IP=$VPS_IP
+ETH_RPC_URL=$RPC_URL
+EOF
+
+# ----------------------------
+# Step 10: Run Operator
 # ----------------------------
 if [[ "$INSTALL_METHOD" == "docker" ]]; then
   git clone https://github.com/0xmoei/Drosera-Network
   cd Drosera-Network
   cp .env.example .env
+  
+  # Replace placeholder values with actual inputs
   sed -i "s/your_evm_private_key/$PRIVATE_KEY/" .env
   sed -i "s/your_vps_public_ip/$VPS_IP/" .env
-
   sed -i "s|https://ethereum-holesky-rpc.publicnode.com|$RPC_URL|" docker-compose.yaml
 
   docker compose up -d
