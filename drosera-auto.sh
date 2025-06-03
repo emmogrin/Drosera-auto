@@ -1,16 +1,14 @@
 #!/bin/bash
 
 echo "=== 🚀 Drosera One-Click Setup (Trap + Operator) ==="
-
-# === **Saint Khen** ===
 echo -e "\n\033[1mSaint Khen\033[0m\n"
 
-# Function to trim whitespace
+# Trim whitespace
 trim() {
   echo "$1" | xargs
 }
 
-# Basic validation for private key (should be 64 hex chars)
+# Validate private key (64 hex chars)
 validate_private_key() {
   if [[ ! $1 =~ ^[0-9a-fA-F]{64}$ ]]; then
     echo "❌ Invalid private key format. Must be exactly 64 hex characters."
@@ -18,7 +16,7 @@ validate_private_key() {
   fi
 }
 
-# Basic validation for IP address
+# Validate IP format
 validate_ip() {
   if ! [[ $1 =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
     echo "❌ Invalid IP address format."
@@ -26,7 +24,7 @@ validate_ip() {
   fi
 }
 
-# Prompt inputs and trim
+# === USER INPUT ===
 read -p "Enter your Trap EVM Private Key (64 hex chars): " PRIVATE_KEY
 PRIVATE_KEY=$(trim "$PRIVATE_KEY")
 validate_private_key "$PRIVATE_KEY"
@@ -54,10 +52,12 @@ if [[ "$INSTALL_METHOD" != "docker" && "$INSTALL_METHOD" != "systemd" ]]; then
   exit 1
 fi
 
+# === SYSTEM UPDATE ===
 echo -e "\n🔄 Updating system and installing dependencies..."
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y curl ufw iptables build-essential git wget lz4 jq make gcc nano automake autoconf tmux htop nvme-cli libgbm1 pkg-config libssl-dev libleveldb-dev tar clang bsdmainutils ncdu unzip libleveldb-dev ca-certificates gnupg
 
+# === DOCKER INSTALL ===
 echo -e "\n🐳 Installing Docker..."
 for pkg in docker.io docker-doc docker-compose podman-docker containerd runc; do sudo apt-get remove -y $pkg; done
 
@@ -72,11 +72,13 @@ $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sou
 sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
+# === CLI TOOLS ===
 echo -e "\n🔧 Installing CLI tools (Drosera, Foundry, Bun)..."
 curl -L https://app.drosera.io/install | bash && source ~/.bashrc && droseraup
 curl -L https://foundry.paradigm.xyz | bash && source ~/.bashrc && foundryup
 curl -fsSL https://bun.sh/install | bash && source ~/.bashrc
 
+# === TRAP SETUP ===
 echo -e "\n📂 Cloning and building Trap project..."
 mkdir -p ~/my-drosera-trap && cd ~/my-drosera-trap
 git config --global user.email "$GITHUB_EMAIL"
@@ -86,6 +88,7 @@ forge init -t drosera-network/trap-foundry-template
 bun install
 forge build
 
+# === CONFIG ===
 echo -e "\n📝 Creating drosera.toml config..."
 cat <<EOF > drosera.toml
 private_trap = true
@@ -95,6 +98,7 @@ EOF
 echo -e "\n🚀 Deploying Trap with drosera CLI..."
 DROSERA_PRIVATE_KEY="$PRIVATE_KEY" drosera apply --eth-rpc-url "$RPC_URL"
 
+# === OPERATOR ===
 echo -e "\n⬇️ Downloading drosera-operator binary..."
 cd ~
 curl -LO https://github.com/drosera-network/releases/releases/download/v1.17.2/drosera-operator-v1.17.2-x86_64-unknown-linux-gnu.tar.gz
@@ -104,6 +108,7 @@ sudo cp drosera-operator /usr/bin
 echo -e "\n🔐 Registering Operator..."
 drosera-operator register --eth-rpc-url "$RPC_URL" --eth-private-key "$PRIVATE_KEY"
 
+# === FIREWALL ===
 echo -e "\n🛡️ Setting up firewall rules..."
 sudo ufw allow ssh
 sudo ufw allow 22
@@ -111,20 +116,9 @@ sudo ufw allow 31313/tcp
 sudo ufw allow 31314/tcp
 sudo ufw --force enable
 
-echo -e "\n📦 Creating .env file for Docker..."
-cat <<EOF > ~/my-drosera-trap/.env
-EVM_PRIVATE_KEY=$PRIVATE_KEY
-VPS_PUBLIC_IP=$VPS_IP
-ETH_RPC_URL=$RPC_URL
-EOF
-
+# === INSTALL METHOD ===
 if [[ "$INSTALL_METHOD" == "docker" ]]; then
   echo -e "\n🐳 Installing Drosera Operator with Docker..."
-
-  if ! command -v docker &> /dev/null; then
-    echo "❌ Docker not found. Please install Docker before proceeding."
-    exit 1
-  fi
 
   cd ~
   if [ ! -d "Drosera-Network" ]; then
@@ -132,12 +126,14 @@ if [[ "$INSTALL_METHOD" == "docker" ]]; then
   fi
   cd Drosera-Network
 
-  cp .env.example .env
+  # ✅ FIXED .env CREATION — NO OVERWRITE!
+  cat <<EOF > .env
+EVM_PRIVATE_KEY=$PRIVATE_KEY
+VPS_PUBLIC_IP=$VPS_IP
+ETH_RPC_URL=$RPC_URL
+EOF
 
-  # ✅ Escape the private key before using sed
-  escaped_key=$(printf '%s\n' "$PRIVATE_KEY" | sed -e 's/[\/&]/\\&/g')
-  sed -i "s|your_evm_private_key|$escaped_key|g" .env
-  sed -i "s|your_vps_public_ip|$VPS_IP|g" .env
+  # 🔧 Patch compose file if needed
   sed -i "s|https://ethereum-holesky-rpc.publicnode.com|$RPC_URL|g" docker-compose.yaml
 
   echo -e "\n📢 Starting Docker containers..."
@@ -174,6 +170,7 @@ EOF
   sudo systemctl start drosera
 fi
 
+# === DONE ===
 echo -e "\n✅ All done!"
 echo "🌐 Go to https://app.drosera.io and connect your wallet"
 echo "🧠 If you haven't opted-in yet, use the Dashboard to 'Opt-in' your Trap"
