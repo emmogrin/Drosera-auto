@@ -35,11 +35,20 @@ check_command() {
     fi
 }
 
-# Check for port conflicts
+# Check for port conflicts using ss (fallback to netstat if available)
 check_ports() {
-    if sudo netstat -tulnp | grep -qE ':31313|:31314'; then
-        echo "❌ Ports 31313 or 31314 are in use. Please free them or edit docker-compose.yaml to use different ports (e.g., 31315, 31316)."
-        exit 1
+    if command -v ss &> /dev/null; then
+        if ss -tuln | grep -qE ':31313|:31314'; then
+            echo "❌ Ports 31313 or 31314 are in use. Please free them or edit docker-compose.yaml to use different ports (e.g., 31315, 31316)."
+            exit 1
+        fi
+    elif command -v netstat &> /dev/null; then
+        if netstat -tulnp | grep -qE ':31313|:31314'; then
+            echo "❌ Ports 31313 or 31314 are in use. Please free them or edit docker-compose.yaml to use different ports (e.g., 31315, 31316)."
+            exit 1
+        fi
+    else
+        echo "⚠️ Neither ss nor netstat found. Please ensure ports 31313 and 31314 are free."
     fi
 }
 
@@ -88,7 +97,7 @@ DISCORD_NAME=$(trim "$DISCORD_NAME")
 # === SYSTEM SETUP ===
 echo -e "\n🔄 Updating system and installing dependencies..."
 sudo apt update && sudo apt upgrade -y
-sudo apt install -y curl ufw iptables build-essential git wget lz4 jq make gcc nano automake autoconf tmux htop nvme-cli libgbm1 pkg-config libssl-dev libleveldb-dev tar clang bsdmainutils ncdu unzip libleveldb-dev ca-certificates gnupg
+sudo apt install -y curl ufw iptables build-essential git wget lz4 jq make gcc nano automake autoconf tmux htop nvme-cli libgbm1 pkg-config libssl-dev libleveldb-dev tar clang bsdmainutils ncdu unzip libleveldb-dev ca-certificates gnupg net-tools
 
 # === DOCKER INSTALL ===
 if command -v docker &> /dev/null; then
@@ -111,15 +120,28 @@ check_ports
 
 # === TOOLS INSTALL ===
 echo -e "\n🔧 Installing CLI tools (Drosera, Foundry, Bun)..."
-curl -L https://app.drosera.io/install | bash || { echo "❌ Drosera CLI installation failed."; exit 1; }
-source ~/.bashrc && droseraup || { echo "❌ droseraup failed."; exit 1; }
+# Drosera CLI
+curl -L https://app.drosera.io/install | bash || { echo "❌ Drosera CLI installation failed. Check network or https://app.drosera.io/install."; exit 1; }
+# Ensure PATH is updated
+source ~/.bashrc 2>/dev/null || source ~/.bash_profile 2>/dev/null || { echo "❌ Failed to source bash configuration. Trying new shell..."; bash -c "source ~/.bashrc && droseraup"; }
+if ! command -v droseraup &> /dev/null; then
+    echo "❌ droseraup not found after installation. Retrying..."
+    curl -L https://app.drosera.io/install | bash || { echo "❌ Drosera CLI retry failed."; exit 1; }
+    source ~/.bashrc 2>/dev/null || source ~/.bash_profile 2>/dev/null
+fi
+droseraup || { echo "❌ droseraup failed. Check network or Drosera documentation."; exit 1; }
 check_command drosera
+
+# Foundry
 curl -L https://foundry.paradigm.xyz | bash || { echo "❌ Foundry installation failed."; exit 1; }
-source ~/.bashrc && foundryup || { echo "❌ foundryup failed."; exit 1; }
+source ~/.bashrc 2>/dev/null || source ~/.bash_profile 2>/dev/null
+foundryup || { echo "❌ foundryup failed."; exit 1; }
 check_command forge
 check_command cast
+
+# Bun
 curl -fsSL https://bun.sh/install | bash || { echo "❌ Bun installation failed."; exit 1; }
-source ~/.bashrc
+source ~/.bashrc 2>/dev/null || source ~/.bash_profile 2>/dev/null
 check_command bun
 
 # === TRAP SETUP ===
@@ -133,7 +155,7 @@ forge init -t drosera-network/trap-foundry-template || { echo "❌ forge init fa
 
 # === CUSTOM TRAP CONTRACT ===
 if [ ! -z "$DISCORD_NAME" ]; then
-    echo -e "\n✍️ Writing custom Trap.sol with Discord username..."
+    echo -e "\n✍️ Writing custom Trap.sol ciliary
     cat <<EOF > ~/my-drosera-trap/src/Trap.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
@@ -229,7 +251,7 @@ services:
     network_mode: host
     volumes:
       - drosera_data_unique:/data
-    command: node --db-file-path /data/drosera.db --network-p2p-port 31313 --server-port 31314 --eth-rpc-url $RPC_URL --eth-backup-rpc-urlencoded -v https://holesky.drpc.org --drosera-address 0xea08f7d533C2b9A62F40D5326214f39a8E3A32F8 --eth-private-key \${ETH_PRIVATE_KEY} --listen-address 0.0.0.0 --network-external-p2p-address \${VPS_IP} --disable-dnr-confirmation true
+    command: node --db-file-path /data/drosera.db --network-p2p-port 31313 --server-port 31314 --eth-rpc-url $RPC_URL --eth-backup-rpc-url https://holesky.drpc.org --drosera-address 0xea08f7d533C2b9A62F40D5326214f39a8E3A32F8 --eth-private-key \${ETH_PRIVATE_KEY} --listen-address 0.0.0.0 --network-external-p2p-address \${VPS_IP} --disable-dnr-confirmation true
     restart: always
     deploy:
       resources:
