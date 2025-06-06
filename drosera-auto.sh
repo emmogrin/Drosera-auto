@@ -35,6 +35,14 @@ check_command() {
     fi
 }
 
+# Check for port conflicts
+check_ports() {
+    if sudo netstat -tulnp | grep -qE ':31313|:31314'; then
+        echo "❌ Ports 31313 or 31314 are in use. Please free them or edit docker-compose.yaml to use different ports (e.g., 31315, 31316)."
+        exit 1
+    fi
+}
+
 # === USER INPUT ===
 echo "📝 Please provide the following details (press Enter to skip optional fields):"
 read -p "Enter your Trap EVM Private Key (64 hex chars, 0x prefix optional): " PRIVATE_KEY
@@ -44,8 +52,8 @@ PRIVATE_KEY=$(validate_private_key "$PRIVATE_KEY")
 read -p "Enter your Ethereum Holesky RPC URL (optional, press Enter for default): " RPC_URL
 RPC_URL=$(trim "$RPC_URL")
 if [ -z "$RPC_URL" ]; then
-    RPC_URL="https://ethereum-holesky-rpc.publicnode.com"
-    echo "ℹ️ Using default public RPC. For better reliability, get a private RPC from Alchemy/QuickNode."
+    RPC_URL="https://eth-holesky.g.alchemy.com/v2/SDctBqvoTyj4LBriVGJPE"
+    echo "ℹ️ Using default Alchemy RPC. For custom RPC, get one from Alchemy/QuickNode."
 fi
 
 read -p "Enter your GitHub Email (optional): " GITHUB_EMAIL
@@ -56,7 +64,11 @@ GITHUB_USER=$(trim "$GITHUB_USER")
 read -p "Enter your Operator Address (0x..., optional, auto-derived if blank): " OPERATOR_ADDR
 OPERATOR_ADDR=$(trim "$OPERATOR_ADDR")
 if [ -z "$OPERATOR_ADDR" ]; then
-    OPERATOR_ADDR=$(cast wallet address --private-key $PRIVATE_KEY)
+    OPERATOR_ADDR=$(cast wallet address --private-key $PRIVATE_KEY 2>/dev/null || echo "")
+    if [ -z "$OPERATOR_ADDR" ]; then
+        echo "❌ Failed to derive operator address. Please provide it manually."
+        exit 1
+    fi
     echo "ℹ️ Operator address auto-derived: $OPERATOR_ADDR"
 fi
 
@@ -79,15 +91,23 @@ sudo apt update && sudo apt upgrade -y
 sudo apt install -y curl ufw iptables build-essential git wget lz4 jq make gcc nano automake autoconf tmux htop nvme-cli libgbm1 pkg-config libssl-dev libleveldb-dev tar clang bsdmainutils ncdu unzip libleveldb-dev ca-certificates gnupg
 
 # === DOCKER INSTALL ===
-echo -e "\n🐳 Installing Docker..."
-for pkg in docker.io docker-doc docker-compose podman-docker containerd runc; do sudo apt-get remove -y $pkg; done
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-sudo docker run hello-world || { echo "❌ Docker installation failed."; exit 1; }
+if command -v docker &> /dev/null; then
+    echo "ℹ️ Docker already installed, skipping installation."
+else
+    echo -e "\n🐳 Installing Docker..."
+    for pkg in docker.io docker-doc docker-compose podman-docker containerd runc; do sudo apt-get remove -y $pkg; done
+    sudo install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    sudo chmod a+r /etc/apt/keyrings/docker.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    sudo apt update
+    sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    sudo docker run hello-world || { echo "❌ Docker installation failed."; exit 1; }
+fi
+
+# === CHECK PORTS ===
+echo -e "\n🔍 Checking for port conflicts..."
+check_ports
 
 # === TOOLS INSTALL ===
 echo -e "\n🔧 Installing CLI tools (Drosera, Foundry, Bun)..."
@@ -169,7 +189,7 @@ bun install || { echo "❌ bun install failed."; exit 1; }
 forge build || { echo "❌ forge build failed."; exit 1; }
 
 echo -e "\n🚀 Deploying Trap with drosera CLI..."
-DROSERA_PRIVATE_KEY="$PRIVATE_KEY" drosera apply --eth-rpc-url "$RPC_URL" || { echo "❌ Trap deployment failed. Check RPC URL or private key."; exit 1; }
+DROSERA_PRIVATE_KEY="$PRIVATE_KEY" drosera apply --eth-rpc-url "$RPC_URL" || { echo "❌ Trap deployment failed. Check private key or RPC URL (ensure wallet has Holesky ETH)."; exit 1; }
 
 # === OPERATOR SETUP ===
 echo -e "\n⬇️ Downloading drosera-operator..."
@@ -180,7 +200,7 @@ sudo cp drosera-operator /usr/bin
 check_command drosera-operator
 
 echo -e "\n🔐 Registering Operator..."
-drosera-operator register --eth-rpc-url "$RPC_URL" --eth-private-key "$PRIVATE_KEY" || { echo "❌ Operator registration failed."; exit 1; }
+drosera-operator register --eth-rpc-url "$RPC_URL" --eth-private-key "$PRIVATE_KEY" || { echo "❌ Operator registration failed. Check private key or RPC URL."; exit 1; }
 
 # === FIREWALL ===
 echo -e "\n🛡️ Configuring UFW..."
@@ -205,16 +225,21 @@ version: '3'
 services:
   drosera:
     image: ghcr.io/drosera-network/drosera-operator:latest
-    container_name: drosera-node
+    container_name: drosera-node-unique
     network_mode: host
     volumes:
-      - drosera_data:/data
-    command: node --db-file-path /data/drosera.db --network-p2p-port 31313 --server-port 31314 --eth-rpc-url $RPC_URL --eth-backup-rpc-url https://holesky.drpc.org --drosera-address 0xea08f7d533C2b9A62F40D5326214f39a8E3A32F8 --eth-private-key \${ETH_PRIVATE_KEY} --listen-address 0.0.0.0 --network-external-p2p-address \${VPS_IP} --disable-dnr-confirmation true
+      - drosera_data_unique:/data
+    command: node --db-file-path /data/drosera.db --network-p2p-port 31313 --server-port 31314 --eth-rpc-url $RPC_URL --eth-backup-rpc-urlencoded -v https://holesky.drpc.org --drosera-address 0xea08f7d533C2b9A62F40D5326214f39a8E3A32F8 --eth-private-key \${ETH_PRIVATE_KEY} --listen-address 0.0.0.0 --network-external-p2p-address \${VPS_IP} --disable-dnr-confirmation true
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512m
 volumes:
-  drosera_data:
+  drosera_data_unique:
 EOF
-    docker compose up -d || { echo "❌ Docker operator failed to start."; exit 1; }
+    docker compose up -d || { echo "❌ Docker operator failed to start. Check Docker setup or port conflicts."; exit 1; }
 else
     echo -e "\n⚙️ Setting up SystemD service..."
     sudo tee /etc/systemd/system/drosera.service > /dev/null <<EOF
@@ -241,13 +266,17 @@ WantedBy=multi-user.target
 EOF
     sudo systemctl daemon-reload
     sudo systemctl enable drosera
-    sudo systemctl start drosera || { echo "❌ SystemD operator failed to start."; exit 1; }
+    sudo systemctl start drosera || { echo "❌ SystemD operator failed to start. Check private key or RPC URL."; exit 1; }
 fi
 
 # === VERIFY ===
 echo -e "\n🔍 Verifying Trap registration..."
-OWNER_ADDR=$(cast wallet address --private-key $PRIVATE_KEY)
-RESULT=$(cast call 0x4608Afa7f277C8E0BE232232265850d1cDeB600E "isResponder(address)(bool)" $OWNER_ADDR --rpc-url $RPC_URL)
+OWNER_ADDR=$(cast wallet address --private-key $PRIVATE_KEY 2>/dev/null || echo "")
+if [ -z "$OWNER_ADDR" ]; then
+    echo "❌ Failed to derive owner address for verification."
+    exit 1
+fi
+RESULT=$(cast call 0x4608Afa7f277C8E0BE232232265850d1cDeB600E "isResponder(address)(bool)" $OWNER_ADDR --rpc-url $RPC_URL 2>/dev/null || echo "false")
 if [[ "$RESULT" == "true" ]]; then
     echo "✅ Trap registration verified!"
 else
@@ -260,7 +289,7 @@ echo -e "\n✅ Setup complete!"
 echo "🌐 Go to https://app.drosera.io, connect your wallet, and opt-in your operator."
 echo "📦 Check trap status and set Bloom on the dashboard."
 if [[ "$INSTALL_METHOD" == "docker" ]]; then
-    echo "🧠 View logs: docker logs -f drosera-node"
+    echo "🧠 View logs: docker logs -f drosera-node-unique"
     echo "🔄 Restart if needed: cd ~/Drosera-Network && docker compose down -v && docker compose up -d"
 else
     echo "🧠 View logs: journalctl -u drosera.service -f"
